@@ -1,0 +1,105 @@
+﻿@page "/admin"
+@attribute [Authorize]
+
+<div class="admin-dashboard">
+    <h2>Project Management</h2>
+    
+    <div class="project-actions">
+        <button class="btn btn-primary" @onclick="ShowCreateModal">Create New Project</button>
+    </div>
+    
+    <div class="projects-grid">
+        @foreach (var project in projects)
+        {
+            <div class="project-card">
+                <h4>@project.Name</h4>
+                <p>@project.Description</p>
+                <div class="project-actions">
+                    <button class="btn btn-sm btn-info" @onclick="() => UploadImages(project.Id)">Upload Images</button>
+                    <button class="btn btn-sm btn-warning" @onclick="() => GenerateShareLink(project.Id)">Share</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Create Project Modal -->
+@if (showCreateModal)
+{
+    <div class="modal-overlay">
+        <div class="modal-content">
+            <h3>Create New Project</h3>
+            <EditForm Model="newProject" OnValidSubmit="CreateProject">
+                <div class="form-group">
+                    <label>Project Name</label>
+                    <InputText @bind-Value="newProject.Name" class="form-control" />
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <InputTextArea @bind-Value="newProject.Description" class="form-control" />
+                </div>
+                <div class="form-group">
+                    <label>Project Type</label>
+                    <InputSelect @bind-Value="newProject.Type" class="form-control">
+                        <option value="Residential">Residential</option>
+                        <option value="Villa">Villa</option>
+                        <option value="Commercial">Commercial</option>
+                    </InputSelect>
+                </div>
+                <div class="form-group">
+                    <label>Share Password</label>
+                    <InputText type="password" @bind-Value="newProject.SharePassword" class="form-control" />
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Create</button>
+                    <button type="button" class="btn btn-secondary" @onclick="HideCreateModal">Cancel</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Project> projects = new();
+    private bool showCreateModal = false;
+    private CreateProjectDto newProject = new();
+    
+    [Inject] private IProjectService ProjectService { get; set; }
+    [Inject] private NavigationManager Navigation { get; set; }
+    
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProjects();
+    }
+    
+    private async Task LoadProjects()
+    {
+        projects = await ProjectService.GetUserProjectsAsync();
+        StateHasChanged();
+    }
+    
+    private void ShowCreateModal() => showCreateModal = true;
+    private void HideCreateModal() => showCreateModal = false;
+    
+    private async Task CreateProject()
+    {
+        await ProjectService.CreateProjectAsync(newProject);
+        await LoadProjects();
+        HideCreateModal();
+        newProject = new CreateProjectDto();
+    }
+    
+    private void UploadImages(Guid projectId)
+    {
+        Navigation.NavigateTo($"/admin/upload/{projectId}");
+    }
+    
+    private async Task GenerateShareLink(Guid projectId)
+    {
+        var project = projects.First(p => p.Id == projectId);
+        var shareUrl = $"{Navigation.BaseUri}project/{projectId}";
+        
+        // Show share dialog with password requirement
+        await JS.InvokeVoidAsync("alert", $"Share this link: {shareUrl}\nPassword required: {project.SharePassword}");
+    }
+}

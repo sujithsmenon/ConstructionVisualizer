@@ -1,0 +1,160 @@
+﻿
+@using ConstructionVisualizer.Services
+@using Microsoft.JSInterop
+@using System.Text.Json
+
+<div class="composer-container">
+    <div class="canvas-container">
+        <canvas @ref="canvasRef"
+                width="800"
+                height="600"
+                class="composer-canvas"></canvas>
+    </div>
+
+    <div class="controls-panel">
+        <div class="layer-controls">
+            @foreach (var layerGroup in availableLayers)
+            {
+                <div class="layer-group">
+                    <h4>@layerGroup.Key</h4>
+                    <select @onchange="(e) => OnLayerSelected(layerGroup.Key, e.Value.ToString())">
+                        <option value="">None</option>
+                        @foreach (var image in layerGroup.Value)
+                        {
+                            <option value="@image.Id">@image.Category</option>
+                        }
+                    </select>
+                </div>
+            }
+        </div>
+
+        <div class="color-picker">
+            <h4>Exterior Colors</h4>
+            <div class="color-options">
+                @foreach (var color in exteriorColors)
+                {
+                    <div class="color-option @(selectedColors["Exterior"] == color ? "selected" : "")"
+                         style="background-color: @color"
+                         @onclick="() => SelectColor(" Exterior", color)"></div>
+                }
+            </div>
+        </div>
+
+        <button class="btn btn-primary" @onclick="SaveCustomization">Save Design</button>
+        <button class="btn btn-secondary" @onclick="ExportImage">Save to Gallery</button>
+    </div>
+</div>
+
+@code {
+    private ElementReference canvasRef;
+    private Canvas2DContext canvasContext;
+    private Dictionary<ImageLayerType, List<ProjectImage>> availableLayers = new();
+    private Dictionary<ImageLayerType, ProjectImage> selectedLayers = new();
+    private Dictionary<string, string> selectedColors = new();
+
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public bool IsReadOnly { get; set; }
+
+    [Inject] private IVisualizationService VisualizationService { get; set; }
+    [Inject] private IMobileStorageService MobileStorage { get; set; }
+
+    private string[] exteriorColors = { "#FFFFFF", "#F0F0F0", "#E8E8E8", "#D0D0D0", "#A0A0A0" };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            canvasContext = await Canvas2DContext.CreateAsync(canvasRef);
+            await LoadProjectLayers();
+        }
+    }
+
+    private async Task LoadProjectLayers()
+    {
+        availableLayers = await VisualizationService.GetProjectLayersAsync(ProjectId);
+        StateHasChanged();
+    }
+
+    private async Task OnLayerSelected(ImageLayerType layerType, string imageId)
+    {
+        if (string.IsNullOrEmpty(imageId))
+        {
+            selectedLayers.Remove(layerType);
+        }
+        else
+        {
+            var image = availableLayers[layerType].FirstOrDefault(i => i.Id.ToString() == imageId);
+            if (image != null)
+            {
+                selectedLayers[layerType] = image;
+            }
+        }
+        await RedrawCanvas();
+    }
+
+    private void SelectColor(string element, string color)
+    {
+        selectedColors[element] = color;
+        // Apply color filter to relevant layers
+        _ = RedrawCanvas();
+    }
+
+    private async Task RedrawCanvas()
+    {
+        // Clear canvas
+        await canvasContext.ClearRectAsync(0, 0, 800, 600);
+
+        // Draw layers in correct z-order
+        var orderedLayers = selectedLayers.OrderBy(l => l.Value.ZIndex);
+        foreach (var layer in orderedLayers)
+        {
+            await DrawImageLayer(layer.Value);
+        }
+    }
+
+    private async Task DrawImageLayer(ProjectImage image)
+    {
+        // Implementation to draw image with transformations
+        await canvasContext.DrawImageAsync(image.ImageUrl, 0, 0, 800, 600);
+
+        // Apply color filters if needed
+        if (selectedColors.ContainsKey("Exterior") && image.LayerType == ImageLayerType.Exterior)
+        {
+            // Apply color overlay
+        }
+    }
+
+    private async Task SaveCustomization()
+    {
+        var customization = new UserCustomizationDto
+        {
+            ProjectId = ProjectId,
+            Selections = new Dictionary<string, object>
+            {
+                ["Layers"] = selectedLayers.ToDictionary(l => l.Key.ToString(), l => (object)l.Value.Id),
+                ["Colors"] = selectedColors
+            }
+        };
+
+        var previewData = await GetCanvasImageData();
+        customization.PreviewImage = previewData;
+
+        await VisualizationService.SaveCustomizationAsync(customization);
+
+        // Also save locally
+        await MobileStorage.SaveUserDataAsync($"customization_{ProjectId}",
+            JsonSerializer.Serialize(customization));
+    }
+
+    private async Task ExportImage()
+    {
+        var imageData = await GetCanvasImageData();
+        var bytes = Convert.FromBase64String(imageData.Split(',')[1]);
+        await MobileStorage.SaveImageToGalleryAsync(bytes, $"design_{ProjectId}_{DateTime.Now:yyyyMMddHHmmss}.png");
+    }
+
+    private async Task<string> GetCanvasImageData()
+    {
+        return await canvasContext.ToDataURLAsync();
+    }
+}
